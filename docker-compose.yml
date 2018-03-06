@@ -1,0 +1,104 @@
+version: '3'
+
+networks:
+  atlas_udd:
+    driver: bridge
+
+volumes:
+    udd_jekins:
+    udd_sonar_extensions:
+    udd_mysql_lib:
+    udd_gitlab_config:
+    udd_gitlab_logs:
+    udd_gitlab_data:
+    udd_nexus_data:
+    
+services:
+
+    a_jenkins:
+        build: ./jenkins
+        container_name: a_jenkins
+        networks:
+            - atlas_udd
+        #privileged: true
+        depends_on:
+            - a_sonarqube
+            - a_gitlab
+            - a_nexus
+        links:
+            - a_sonarqube
+            - a_gitlab
+            - a_nexus
+        ports:
+            - "28080:8080"
+            - "20000:50000"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /usr/local/bin/docker:/usr/local/bin/docker
+            - udd_jekins:/var/jenkins_home
+            - /tools/maven_repository:/tools/maven_repository       
+    
+    a_sonarqube:
+        image: sonarqube
+        container_name: a_sonarqube
+        networks:
+            - atlas_udd
+        ports:
+            - "29000:9000"
+        environment:
+            - SONARQUBE_JDBC_URL=jdbc:mysql://a_mysql:3306/sonar?useUnicode=true&characterEncoding=utf8&rewriteBatchedStatements=true&useConfigs=maxPerformance
+            - SONARQUBE_JDBC_USERNAME=sonar
+            - SONARQUBE_JDBC_PASSWORD=sonar
+        volumes:
+            - udd_sonar_extensions:/opt/sonarqube/extensions
+            - ./sonar:/opt/sonarqube/docker
+        depends_on: 
+            - a_mysql
+        links:
+            - a_mysql
+        ## Cette commande est un contournement au probleme de synchronisation entre containers.    
+        entrypoint: |
+            bash -c 'bash -s <<EOF
+            trap "break;exit" SIGHUP SIGINT SIGTERM
+            javac /opt/sonarqube/docker/com/Detector.java
+            java -cp `find /opt/sonarqube/ -name "mysql-connector*.jar"`:/opt/sonarqube/docker com.Detector && ./bin/run.sh
+            EOF'
+    
+    a_mysql:
+        image: mysql
+        container_name: a_mysql
+        networks:
+            - atlas_udd
+        ports:
+            - "3306:3306"
+        environment:
+            - MYSQL_ROOT_PASSWORD=secret
+            - MYSQL_DATABASE=sonar
+            - MYSQL_USER=sonar
+            - MYSQL_PASSWORD=sonar
+        volumes:
+            - udd_mysql_lib:/var/lib/mysql
+
+    a_gitlab:
+        image: gitlab/gitlab-ce
+        container_name: a_gitlab
+        networks:
+            - atlas_udd
+        ports:
+            - "20080:80"
+            - "20443:443"
+            - "20022:22"
+        volumes:
+            - udd_gitlab_config:/etc/gitlab
+            - udd_gitlab_logs:/var/log/gitlab
+            - udd_gitlab_data:/var/opt/gitlab
+    
+    a_nexus:
+        image: sonatype/nexus3
+        container_name: a_nexus
+        networks:
+            - atlas_udd
+        ports:
+            - "28081:8081"
+        volumes:
+            - udd_nexus_data:/nexus-data
